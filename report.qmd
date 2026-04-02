@@ -1,0 +1,301 @@
+---
+title: "Children’s Wellbeing and Caregiving: A UNICEF Data Story"
+author: "Peter Cooney"
+format:
+  html:
+    embed-resources: true
+    code-fold: true
+    theme: cosmo
+    css: styles.css
+execute:
+  warning: false
+  message: false
+---
+
+# Introduction
+
+Children’s early experiences play a critical role in shaping development, health, and future opportunities. Across the world, caregiving environments vary significantly, with some children exposed to harmful disciplinary practices while others benefit from supportive and stimulating interactions.
+
+This report examines global patterns in child wellbeing using UNICEF data. It focuses on two key dimensions:
+
+- **Harmful discipline** — the percentage of children aged 1–14 who experience physical punishment and/or psychological aggression
+- **Early stimulation** — the percentage of children aged 24–59 months who engage in four or more developmental activities with a caregiver
+
+By comparing these indicators across countries, the report highlights how caregiving environments differ globally and explores the relationship between negative and positive child outcomes.
+
+# Load libraries
+
+```{python}
+import polars as pl
+import pandas as pd
+from plotnine import *
+```
+
+# Load data
+
+```{python}
+indicator_1 = pl.read_csv("unicef_indicator_1.csv")
+indicator_2 = pl.read_csv("unicef_indicator_2.csv")
+metadata = pl.read_csv("unicef_metadata (1).csv")
+```
+
+# Prepare the data
+
+```{python}
+ind1 = (
+    indicator_1
+    .filter(pl.col("sex") == "Total")
+    .select(["country", "alpha_3_code", "time_period", "obs_value"])
+    .rename({"obs_value": "negative_outcome"})
+)
+
+ind2 = (
+    indicator_2
+    .filter(pl.col("sex") == "Total")
+    .select(["country", "alpha_3_code", "time_period", "obs_value"])
+    .rename({"obs_value": "positive_outcome"})
+)
+
+ind1_latest = (
+    ind1
+    .sort(["country", "time_period"])
+    .group_by("country")
+    .agg([
+        pl.col("alpha_3_code").last().alias("alpha_3_code"),
+        pl.col("time_period").last().alias("year"),
+        pl.col("negative_outcome").last().alias("negative_outcome")
+    ])
+)
+
+ind2_latest = (
+    ind2
+    .sort(["country", "time_period"])
+    .group_by("country")
+    .agg([
+        pl.col("positive_outcome").last().alias("positive_outcome")
+    ])
+)
+
+combined = (
+    ind1_latest
+    .join(ind2_latest, on="country", how="inner")
+    .drop_nulls()
+)
+
+combined_pd = combined.to_pandas()
+```
+
+# Relationship between harmful discipline and early stimulation
+
+Each dot represents one country. This chart compares harmful discipline and early stimulation using the latest available Total values.
+
+```{python}
+labels_pd = pd.concat([
+    combined_pd.nlargest(2, "negative_outcome"),
+    combined_pd.nsmallest(2, "negative_outcome"),
+    combined_pd.nlargest(2, "positive_outcome"),
+    combined_pd.nsmallest(2, "positive_outcome")
+]).drop_duplicates(subset=["country"]).copy()
+
+(
+    ggplot(combined_pd, aes(x="negative_outcome", y="positive_outcome"))
+    + geom_point(
+        aes(color="positive_outcome"),
+        size=3.5,
+        alpha=0.85
+    )
+    + geom_smooth(
+        method="lm",
+        se=False,
+        color="#D1495B",
+        size=1.3
+    )
+    + geom_text(
+        data=labels_pd,
+        mapping=aes(label="country"),
+        nudge_y=2,
+        size=8,
+        color="#222222"
+    )
+    + scale_color_gradient(
+        low="#9BD7F4",
+        high="#1CABE2"
+    )
+    + theme_minimal()
+    + labs(
+        title="Countries with higher early stimulation often show lower harmful discipline",
+        subtitle="Latest available Total values by country",
+        x="Children experiencing physical punishment and/or psychological aggression (%)",
+        y="Children receiving 4+ early stimulation activities (%)",
+        color="Early stimulation (%)"
+    )
+    + theme(
+        figure_size=(10, 7),
+        plot_title=element_text(size=16, weight="bold"),
+        plot_subtitle=element_text(size=11),
+        axis_title=element_text(size=11),
+        axis_text=element_text(size=10),
+        legend_title=element_text(size=10),
+        legend_text=element_text(size=9),
+        panel_grid_minor=element_blank(),
+        panel_grid_major=element_line(color="#E6E6E6"),
+        panel_background=element_rect(fill="white", color="white")
+    )
+)
+```
+# Countries with the highest harmful discipline rates
+
+This chart highlights the countries with the highest latest available rates of harmful discipline.
+
+```{python}
+top10_pd = (
+    combined_pd
+    .sort_values("negative_outcome", ascending=False)
+    .head(10)
+    .copy()
+)
+
+top10_pd["country"] = pd.Categorical(
+    top10_pd["country"],
+    categories=top10_pd.sort_values("negative_outcome")["country"],
+    ordered=True
+)
+
+(
+    ggplot(top10_pd, aes(x="country", y="negative_outcome", fill="negative_outcome"))
+    + geom_col(width=0.72, show_legend=False)
+    + coord_flip()
+    + geom_text(
+        aes(label="round(negative_outcome, 1)"),
+        ha="left",
+        nudge_y=1.2,
+        size=9,
+        color="#222222"
+    )
+    + scale_fill_gradient(
+        low="#9BD7F4",
+        high="#1CABE2"
+    )
+    + theme_minimal()
+    + labs(
+        title="Countries with the highest harmful discipline rates",
+        subtitle="Latest available Total values",
+        x="Country",
+        y="Children experiencing physical punishment and/or psychological aggression (%)"
+    )
+    + theme(
+        figure_size=(11, 7),
+        plot_title=element_text(size=16, weight="bold"),
+        plot_subtitle=element_text(size=11),
+        axis_title=element_text(size=11),
+        axis_text=element_text(size=10),
+        panel_grid_major_y=element_blank(),
+        panel_grid_minor=element_blank(),
+        panel_grid_major_x=element_line(color="#E6E6E6"),
+        panel_background=element_rect(fill="white", color="white")
+    )
+)
+```
+# Child wellbeing context over time
+
+This chart uses life expectancy as a broader child wellbeing context indicator. It shows how long-run wellbeing conditions have changed over time in selected countries that also appear in this report.
+
+```{python}
+time_meta_pd = (
+    metadata
+    .filter(pl.col("country").is_in([
+        "Bangladesh",
+        "Ghana",
+        "Iraq",
+        "Serbia",
+        "Togo"
+    ]))
+    .select([
+        "country",
+        "year",
+        "Life expectancy at birth, total (years)"
+    ])
+    .rename({
+        "Life expectancy at birth, total (years)": "life_expectancy"
+    })
+    .drop_nulls()
+    .filter(pl.col("year") >= 2000)
+    .sort(["country", "year"])
+    .to_pandas()
+)
+
+(
+    ggplot(time_meta_pd, aes(x="year", y="life_expectancy", color="country"))
+    + geom_line(size=1.4)
+    + geom_point(size=2.2)
+    + scale_color_manual(
+        values=["#1CABE2", "#D1495B", "#2A9D8F", "#F4A261", "#6A4C93"]
+    )
+    + scale_x_continuous(
+        breaks=list(range(2000, 2025, 4))
+    )
+    + theme_minimal()
+    + labs(
+        title="Life expectancy has improved over time in all selected countries",
+        subtitle="Life expectancy at birth, total (years), 2000–2024",
+        x="Year",
+        y="Life expectancy at birth (years)",
+        color="Country"
+    )
+    + theme(
+        figure_size=(11, 7),
+        plot_title=element_text(size=16, weight="bold"),
+        plot_subtitle=element_text(size=11),
+        axis_title=element_text(size=11),
+        axis_text=element_text(size=10),
+        legend_title=element_text(size=10),
+        legend_text=element_text(size=9),
+        panel_grid_minor=element_blank(),
+        panel_grid_major=element_line(color="#E6E6E6"),
+        panel_background=element_rect(fill="white", color="white")
+    )
+)
+```
+# Global pattern of harmful discipline
+
+This map shows the latest available harmful discipline value for each country in the dataset.
+
+```{python}
+import geopandas as gpd
+from plotnine import *
+
+map_values_pd = combined_pd[["alpha_3_code", "negative_outcome"]].copy()
+
+world = gpd.read_file("https://naturalearth.s3.amazonaws.com/110m_cultural/ne_110m_admin_0_countries.zip")
+world = world[["ADM0_A3", "geometry"]].rename(columns={"ADM0_A3": "alpha_3_code"})
+
+world_map = world.merge(map_values_pd, on="alpha_3_code", how="left")
+
+(
+    ggplot(world_map)
+    + geom_map(
+        aes(fill="negative_outcome", geometry="geometry"),
+        color="white",
+        size=0.15
+    )
+    + scale_fill_gradient(
+        low="#D6EEF9",
+        high="#1CABE2",
+        na_value="#F2F2F2"
+    )
+    + theme_void()
+    + labs(
+        title="Harmful discipline remains widespread across many countries",
+        subtitle="Latest available percentage of children experiencing physical punishment and/or psychological aggression",
+        fill="Harmful discipline (%)"
+    )
+    + theme(
+        figure_size=(12, 7),
+        plot_title=element_text(size=16, weight="bold"),
+        plot_subtitle=element_text(size=11),
+        legend_title=element_text(size=10),
+        legend_text=element_text(size=9),
+        panel_background=element_rect(fill="white", color="white")
+    )
+)
+```
